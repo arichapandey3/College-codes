@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 Door Lock OTP Generator</title>
+    <!-- Load Tailwind CSS for modern styling and responsiveness -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for the app */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+
+    <div id="app-container" class="w-full max-w-md bg-white p-8 rounded-xl shadow-2xl border-t-4 border-indigo-600">
+        <h1 class="text-3xl font-bold text-gray-800 mb-6 text-center">
+            Secure OTP Access Panel
+        </h1>
+
+        <!-- Configuration -->
+        <div class="mb-6">
+            <label for="esp32Ip" class="block text-sm font-medium text-gray-700 mb-2">
+                ESP32 IP Address (and Port):
+            </label>
+            <input 
+                type="text" 
+                id="esp32Ip" 
+                value="10.244.36.59" 
+                placeholder="e.g., 192.168.1.100" 
+                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-gray-800"
+            >
+            <p class="mt-1 text-xs text-red-500">
+                ⚠️ Communication is now on **Port 80**.
+            </p>
+        </div>
+
+        <!-- OTP Display -->
+        <div class="text-center mb-8 bg-gray-100 p-6 rounded-lg border border-gray-200">
+            <p class="text-lg text-gray-600">Generated One-Time Password:</p>
+            <div id="otp-display" class="text-5xl font-extrabold text-indigo-700 mt-2 tracking-widest transition-opacity duration-300">
+                ------
+            </div>
+            <!-- Countdown Timer added here -->
+            <div id="otp-countdown" class="mt-2 text-md font-bold text-gray-400">
+                Generate OTP to start timer
+            </div>
+            <div id="status-message" class="mt-4 text-sm font-semibold h-5"></div>
+        </div>
+
+        <!-- Action Button -->
+        <button 
+            id="sendButton"
+            onclick="generateAndSendOTP()"
+            class="w-full flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition duration-150 ease-in-out shadow-lg"
+        >
+            <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+            Generate & Send New OTP
+        </button>
+
+    </div>
+
+    <script>
+        const otpDisplay = document.getElementById('otp-display');
+        const statusMessage = document.getElementById('status-message');
+        const ipInput = document.getElementById('esp32Ip');
+        const sendButton = document.getElementById('sendButton');
+        const otpCountdown = document.getElementById('otp-countdown'); // New element
+        
+        const PORT = 80;
+        const OTP_VALIDITY_MS = 60000; // 60 seconds (1 minute)
+
+        let otpExpiryTime = 0; // Timestamp (ms) when the current OTP expires
+        let countdownInterval;
+
+        /**
+         * Generates a random 6-digit OTP.
+         * @returns {string} The 6-digit OTP.
+         */
+        function generateOTP() {
+            let otp = '';
+            for (let i = 0; i < 6; i++) {
+                otp += Math.floor(Math.random() * 10).toString();
+            }
+            return otp;
+        }
+
+        /**
+         * Starts the 60-second countdown timer.
+         */
+        function startCountdown() {
+            // Clear any previous interval to ensure only one timer is running
+            if (countdownInterval) {
+                clearInterval(countdownInterval);
+            }
+
+            // Reset UI state for a new OTP
+            otpDisplay.classList.remove('opacity-50', 'line-through');
+            otpCountdown.classList.remove('text-red-700');
+            otpCountdown.classList.add('text-green-600');
+
+            countdownInterval = setInterval(() => {
+                const timeRemaining = otpExpiryTime - Date.now();
+                const seconds = Math.floor(timeRemaining / 1000);
+
+                if (seconds > 0) {
+                    otpCountdown.textContent = `Expires in: ${seconds}s`;
+                    if (seconds <= 10) {
+                        // Highlight the last 10 seconds in red
+                        otpCountdown.classList.remove('text-green-600');
+                        otpCountdown.classList.add('text-red-700');
+                    }
+                } else {
+                    // OTP Expired
+                    clearInterval(countdownInterval);
+                    otpDisplay.textContent = 'EXPIRED';
+                    otpDisplay.classList.add('opacity-50', 'line-through');
+                    otpCountdown.textContent = 'OTP Expired! Generate New Key.';
+                    otpCountdown.classList.remove('text-green-600');
+                    otpCountdown.classList.add('text-red-700');
+                    statusMessage.textContent = 'Security policy requires a new OTP.';
+                }
+            }, 1000);
+        }
+
+        /**
+         * Sends the OTP to the ESP32 via HTTP GET request.
+         * @param {string} otp - The generated OTP.
+         * @param {string} ip - The ESP32's IP address.
+         */
+        async function sendOTPToESP32(otp, ip) {
+            statusMessage.className = 'mt-4 text-sm font-semibold text-yellow-600 h-5';
+            statusMessage.textContent = 'Sending OTP...';
+            sendButton.disabled = true;
+            sendButton.classList.add('opacity-50', 'cursor-not-allowed');
+
+            const url = `http://${ip}:${PORT}/newotp?code=${otp}`;
+
+            try {
+                const response = await fetch(url, {
+                    method: 'GET',
+                    mode: 'no-cors' 
+                });
+
+                statusMessage.className = 'mt-4 text-sm font-semibold text-green-600 h-5';
+                statusMessage.textContent = `SUCCESS! Request Sent via Port ${PORT}. Check ESP32 LCD.`;
+            
+            } catch (error) {
+                statusMessage.className = 'mt-4 text-sm font-semibold text-red-600 h-5';
+                statusMessage.textContent = `ERROR: Connection failed on Port ${PORT}. Network blockage suspected.`;
+                console.error('Failed to send OTP:', error);
+            } finally {
+                sendButton.disabled = false;
+                sendButton.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+        }
+
+        /**
+         * Main function to generate and send the OTP.
+         */
+        function generateAndSendOTP() {
+            const ip = ipInput.value.trim();
+            
+            const otp = generateOTP();
+            otpDisplay.textContent = otp;
+            
+            // Set expiry time 60 seconds from now
+            otpExpiryTime = Date.now() + OTP_VALIDITY_MS;
+            
+            // Start the visual countdown timer
+            startCountdown();
+
+            // Initiate the communication
+            sendOTPToESP32(otp, ip);
+        }
+    </script>
+</body>
+</html>
